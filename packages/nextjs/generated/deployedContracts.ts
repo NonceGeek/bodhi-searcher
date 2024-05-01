@@ -108,7 +108,7 @@ const contracts = {
               stateMutability: "view",
               type: "function",
             },
-          ]
+          ],
         },
       },
     },

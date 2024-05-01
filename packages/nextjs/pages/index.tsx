@@ -96,20 +96,6 @@ const ETHSpace: NextPage = () => {
   };
 
   const handleonClick = async () => {
-    // 1. request a search item at deno.
-    // 2. wait for 1 sec to query the result.
-    // 3. return as a list.
-
-    // await fetch("https://polite-goose-87.deno.dev", {
-    //   method: "GET",
-    //   headers: {
-    //     "Content-Type": "application/json; charset=utf-8",
-    //   },
-    //   // mode: "no-cors",
-    // })
-    // .then(response => {
-    //   console.log("respp:" + JSON.stringify(response));
-    // })
 
     console.log("searchPrompt:" + searchPrompt);
     const response = await fetch("https://embedding-search.deno.dev/", {
@@ -157,31 +143,7 @@ const ETHSpace: NextPage = () => {
       }),
     };
     console.log("res1: ", res1);
-    // console.log(data.result.similarities);
     setRes([res1]);
-
-    // const response = await fetch("https://faas.movespace.xyz/api/v1/run?name=VectorAPI&func_name=search_data", {
-    //   method: "POST",
-    //   headers: {
-    //     "Content-Type": "application/json; charset=utf-8",
-    //   },
-    //   body: JSON.stringify({
-    //     params: [dataset, searchPrompt, 5],
-    //   }),
-    // });
-    // const data = await response.json();
-    // const res1: resultByDataset = {
-    //   dataset_id: data.result.dataset_id,
-    //   results: data.result.similarities.map((s: { data: any; metadata: any }) => {
-    //     return {
-    //       data: s.data,
-    //       metadata: s.metadata,
-    //     };
-    //   }),
-    // };
-    // // console.log(data.result.similarities);
-    // setRes(res => [res1, ...res]);
-    // // console.log(res);
   };
   return (
     <div className="grid lg:grid-cols-2 flex-grow">

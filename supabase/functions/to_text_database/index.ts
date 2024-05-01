@@ -32,17 +32,6 @@ Deno.serve(async (req) => {
   //   "old_record": null
   // }
 
-  const payload = JSON.stringify({"params": [body]})
-
-  // check payload by webhook
-  // await fetch('https://webhook.site/b6badf85-a897-4342-ab5d-a3bb2efb565b?from=far', {
-  //   method: 'POST',
-  //   headers: {
-  //     'Content-Type': 'application/json',
-  //   },
-  //   body: payload,
-  // })
-
   // call the faas system to handle it.
   await fetch('https://faas.movespace.xyz/api/v1/run?name=Contracts.Bodhi&func_name=supabase_raw_to_text_data', {
     method: 'POST',
@@ -56,13 +45,6 @@ Deno.serve(async (req) => {
   )
   .then(
     async (data) => {
-    // fetch('https://webhook.site/b6badf85-a897-4342-ab5d-a3bb2efb565b?from=to_text_database', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({"params": data.result}),
-    // })
     if (data.result != "pass" && data.result != null) {
 
       // insert to next dataset
@@ -73,13 +55,6 @@ Deno.serve(async (req) => {
         content: data.result.content,
         creator: data.result.creator,
       })
-      // fetch('https://webhook.site/b6badf85-a897-4342-ab5d-a3bb2efb565b?from=far', {
-      //   method: 'POST',
-      //   headers: {
-      //     'Content-Type': 'application/json',
-      //   },
-      //   body: data.result.content,
-      // })
 
       // change the status of the original dataset
       await supabase
