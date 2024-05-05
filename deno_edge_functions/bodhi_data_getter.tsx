@@ -34,6 +34,29 @@ const provider = new ethers.providers.JsonRpcProvider("https://mainnet.optimism.
 
 const contract = new ethers.Contract(contractAddress, contractABI, provider);
 
+// img checker.
+function containsImage(markdownString) {
+    const regex = /!\[.*?\]\((.*?)\)/;
+    return regex.test(markdownString);
+}
+
+function extractImageLink(markdownImageString: string): string | null {
+    // Regular expression to match the format ![some_text](url)
+    const regex = /!\[.*?\]\((.*?)\)/;
+  
+    // Use the regex to find matches
+    const match = markdownImageString.match(regex);
+  
+    // If a match is found and it has a group capture, return the URL
+    if (match && match[1]) {
+      return match[1];
+    }
+  
+    // If no match is found, return null
+    return null;
+  }
+
+// balance checker.
 async function checkTokenHold(addr, assetId, minHold) {
     try {
         // Call the balanceOf function
@@ -51,6 +74,98 @@ async function checkTokenHold(addr, assetId, minHold) {
 }
 
 router
+    .get("/", async(context) => {
+        context.response.body = {"result": "Hello World!"};
+    })
+    .get("/imgs", async(context) =>{
+        //TODO: get 10 imgs from img_assets_k_v by desc.
+        const supabase = createClient(
+            Deno.env.get('SUPABASE_URL') ?? '',
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+        );
+    
+        // Fetch the top 10 images sorted by 'created_at' in descending order
+        const { data, error } = await supabase
+            .from('bodhi_img_assets_k_v')
+            .select('id_on_chain, creator, created_at, metadata, link') // Select fields you need
+            .order('created_at', { ascending: false }) // Assuming 'created_at' is a timestamp
+            .limit(10);
+    
+        if (error) {
+            console.error("Error fetching images:", error);
+            context.response.status = 500;
+            context.response.body = { error: "Failed to fetch images" };
+            return;
+        }
+    
+        // Assuming 'data' contains the fetched images
+        context.response.body = { images: data };
+    })
+    .get("/batch_to_img", async(context) =>{
+        const supabase = createClient(
+            // Supabase API URL - env var exported by default.
+            Deno.env.get('SUPABASE_URL') ?? '',
+            // Supabase API ANON KEY - env var exported by default.
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+            // Create client with Auth context of the user that called the function.
+            // This way your row-level-security (RLS) policies are applied.
+            // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+          )
+        const { data, error } = await supabase
+        .from('bodhi_text_assets_k_v')
+        .select()
+        .eq('if_to_img_assets', 0)
+        // .eq('id', 9324);
+        console.log("error:", error);
+        // for all the data
+       
+
+        for (const item of data) {
+            console.log("handle item:", item.id);
+            const hasImage = containsImage(item.data); // Assuming 'content' contains the markdown text
+            console.log("hasImage:", hasImage);
+            const newValue = hasImage ? 2 : 1; // If it has image, set to 2, otherwise set to 1
+            if(newValue==2){
+                console.log("detect img item:", item.id);
+                // Insert into bodhi_img_assets_k_v, omitting the embedding field
+                // Function to extract image link from Markdown content
+                const imgLink = extractImageLink(item.data);
+
+                // Prepare the item for insertion by omitting certain fields
+                const itemToInsert = {
+                    id_on_chain: item.id_on_chain,
+                    creator: item.creator,
+                    created_at: item.created_at,
+                    metadata: item.metadata,
+                    link: imgLink  // Set the extracted image link
+                };
+        
+
+                const insertResponse = await supabase
+                    .from('bodhi_img_assets_k_v')
+                    .insert([itemToInsert]);
+
+                if (insertResponse.error) {
+                    console.log(`Failed to insert item ${item.id} into bodhi_img_assets_k_v:`, insertResponse.error);
+                } else {
+                    console.log(`Item ${item.id} inserted into bodhi_img_assets_k_v successfully.`);
+                }
+            }
+
+            // update the bodhi_text_assets_k_v table.
+            const updateResponse = await supabase
+                .from('bodhi_text_assets_k_v')
+                .update({ if_to_img_assets: newValue })
+                .match({ id: item.id }); // Assuming 'id' is the primary key of the table
+    
+            if (updateResponse.error) {
+                console.log(`Failed to update item ${item.id}:`, updateResponse.error);
+            } else {
+                console.log(`Item ${item.id} updated successfully.`);
+            }
+        }
+        context.response.body = {"result": "batch to img done"};
+    })
     .get("/bodhi_auth", async(context) =>{
 
         // 1. verify that addr, msg and signature is valid(验证签名).
