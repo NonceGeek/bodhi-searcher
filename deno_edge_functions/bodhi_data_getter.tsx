@@ -74,6 +74,44 @@ async function checkTokenHold(addr, assetId, minHold) {
 }
 
 router
+  .get("/set_img", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    let asset_id = parseInt(queryParams.get("asset_id"), 10);
+    const category = queryParams.get("category");
+    const adminKey = queryParams.get("admin_key");
+
+    // Example: Basic admin key verification
+    if (adminKey !== Deno.env.get("ADMIN_KEY")) {
+      context.response.status = 403;
+      context.response.body = "Unauthorized";
+      return;
+    }
+
+    if (!asset_id || !category) {
+      context.response.status = 400;
+      context.response.body = "Missing required parameters";
+      return;
+    }
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const { data, error } = await supabase
+      .from("bodhi_img_assets_k_v")
+      .update({ category })
+      .eq("id_on_chain", asset_id);
+
+    if (error) {
+      console.error("Error updating asset category:", error);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to update category" };
+      return;
+    }
+
+    context.response.body = { message: "Category updated successfully", data };
+  })
   .get("/", async (context) => {
     context.response.body = { result: "Hello World!" };
   })
@@ -102,6 +140,127 @@ router
 
     // Return the latest ID
     context.response.body = { latestId: latestId };
+  })
+  .get("/text_search", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const key = queryParams.get("keyword");
+    const tableName = queryParams.get("table_name");
+    const column = queryParams.get("column");
+
+    // List of searchable tables
+    const searchableTables = ["bodhi_text_assets", "bodhi_text_assets_k_v"];
+
+    // Check if the table is allowed to be searched
+    if (!searchableTables.includes(tableName)) {
+      context.response.status = 403; // Forbidden status code
+      context.response.body = {
+        error: "The specified table is not searchable.",
+      };
+      return;
+    }
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    try {
+      const { data, error } = await supabase
+        .from(tableName)
+        .select("*") // Select all columns initially
+        .textSearch(column, key);
+
+      if (error) {
+        throw error;
+      }
+
+      // Process the data to remove the 'embedding' column if it exists
+      const processedData = data.map((item) => {
+        const { embedding, ...rest } = item; // Destructure to exclude 'embedding', only if it exists
+        return rest;
+      });
+
+      context.response.status = 200;
+      context.response.body = processedData;
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch data" };
+    }
+  })
+  .get("/constant", async (context) => {
+    // * get value by the key and app name.
+    // TODO: impl the param parser of get/post in the scaffold-aptos.
+    // 1. parse params in get req.
+    const queryParams = context.request.url.searchParams;
+    const key = queryParams.get("key");
+
+    // 2. parse params in post req.
+    // let content = await context.request.body.text();
+    // content = JSON.parse(content);
+    // const uuid = content.uuid;
+
+    const supabase = createClient(
+      // Supabase API URL - env var exported by default.
+      Deno.env.get("SUPABASE_URL") ?? "",
+      // Supabase API ANON KEY - env var exported by default.
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // Create client with Auth context of the user that called the function.
+      // This way your row-level-security (RLS) policies are applied.
+      // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    // Querying data from Supabase
+    const { data, error } = await supabase
+      .from("bodhi_constants")
+      .select("*")
+      .eq("key", key)
+      .single();
+
+    if (error) {
+      console.error("Error fetching data:", error);
+      context.response.status = 500;
+      context.response.body = "Failed to fetch data";
+      return;
+    }
+
+    context.response.body = data;
+  })
+  .get("/imgs_page", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const page = parseInt(queryParams.get("page"), 10) || 1;
+    const limit = parseInt(queryParams.get("limit"), 10) || 10; // Default to 10 items per page if not specified
+    const category = queryParams.get("category");
+
+    const offset = (page - 1) * limit; // Calculate offset
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    let query = supabase
+      .from("bodhi_img_assets_k_v")
+      .select() // Select fields as needed, could specify like "id, link, metadata"
+      .order("id", { ascending: false }) // Or order by any other relevant field
+      //   .limit(limit)
+      .range(offset, offset + limit - 1);
+
+    if (category) {
+      query = query.eq("category", category); // Filter by category if it is provided
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Error fetching images:", error);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch images" };
+      return;
+    }
+
+    // Assuming 'data' contains the fetched images
+    context.response.body = { images: data, page, limit };
   })
   .get("/imgs", async (context) => {
     let cursor = context.request.url.searchParams.get("cursor");
@@ -306,6 +465,169 @@ router
       console.log("B"); // If space_id is in params, print "B"
       context.response.body = "Assets Endpoint Hit";
     }
+  })
+  // TODO: more abstract the APIs.
+  .get("/assets_by_table_name", async (context) => {
+    // Create a Supabase client with the Auth context of the logged in user.
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // To implement row-level security (RLS), uncomment and adjust the following lines:
+      // , {
+      //   global: {
+      //     headers: { Authorization: `Bearer ${context.request.headers.get('Authorization')}` }
+      //   }
+      // }
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const tableName = queryParams.get("table_name");
+
+    try {
+      // Define a basic select query for fetching all data from the first table
+      let query = supabase.from(tableName).select("*");
+
+      // Execute the first query
+      const { data: initialData, error: initialError } = await query;
+
+      if (initialError) {
+        throw initialError;
+      }
+
+      // Extract the id_on_chain values from the initial query result
+      const idOnChains = initialData.map((item) => item.id_on_chain);
+
+      // Execute the second query using the id_on_chain values to fetch from bodhi_text_assets
+      const { data: secondaryData, error: secondaryError } = await supabase
+        .from("bodhi_text_assets")
+        .select("*")
+        .in("id_on_chain", idOnChains);
+
+      if (secondaryError) {
+        throw secondaryError;
+      }
+
+      // Create a map from id_on_chain to category and type from initialData
+      const categoryTypeMap = initialData.reduce((acc, item) => {
+        acc[item.id_on_chain] = { category: item.category, type: item.type };
+        return acc;
+      }, {});
+
+      // Append category and type to each item in secondaryData
+      const enrichedSecondaryData = secondaryData.map((item) => {
+        return {
+          ...item,
+          ...categoryTypeMap[item.id_on_chain], // Merge category and type based on id_on_chain
+        };
+      });
+
+      // Return the enriched secondaryData as a JSON response.
+      context.response.body = enrichedSecondaryData;
+      context.response.status = 200;
+    } catch (err) {
+      console.error("Failed to fetch data:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch data" };
+    }
+  })
+  .get("/assets_by_space_v2", async (context) => {
+    // Create a Supabase client with the Auth context of the logged in user.
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // To implement row-level security (RLS), uncomment and adjust the following lines:
+      // , {
+      //   global: {
+      //     headers: { Authorization: `Bearer ${context.request.headers.get('Authorization')}` }
+      //   }
+      // }
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const spaceContractAddr = queryParams.get("space_addr") + "_indexer";
+
+    // Check if 'type' parameter exists and set the variable accordingly
+    let typeFilter = queryParams.has("type") ? queryParams.get("type") : null;
+    let categoryFilter = queryParams.has("category")
+      ? queryParams.get("category")
+      : null;
+
+    try {
+      // Define a basic select query for fetching all data from the first table
+      let query = supabase.from(spaceContractAddr).select("*");
+
+      // If typeFilter is set, modify the query to filter by 'type' column
+      if (typeFilter) {
+        query = query.eq("type", typeFilter);
+      }
+
+      if (categoryFilter) {
+        query = query.eq("category", categoryFilter);
+      }
+
+      // Execute the first query
+      const { data: initialData, error: initialError } = await query;
+
+      if (initialError) {
+        throw initialError;
+      }
+
+      // Extract the id_on_chain values from the initial query result
+      const idOnChains = initialData.map((item) => item.id_on_chain);
+
+      // Execute the second query using the id_on_chain values to fetch from bodhi_text_assets
+      const { data: secondaryData, error: secondaryError } = await supabase
+        .from("bodhi_text_assets")
+        .select("*")
+        .in("id_on_chain", idOnChains);
+
+      if (secondaryError) {
+        throw secondaryError;
+      }
+
+      // Create a map from id_on_chain to category and type from initialData
+      const categoryTypeMap = initialData.reduce((acc, item) => {
+        acc[item.id_on_chain] = { category: item.category, type: item.type };
+        return acc;
+      }, {});
+
+      // Append category and type to each item in secondaryData
+      const enrichedSecondaryData = secondaryData.map((item) => {
+        return {
+          ...item,
+          ...categoryTypeMap[item.id_on_chain], // Merge category and type based on id_on_chain
+        };
+      });
+
+      // Return the enriched secondaryData as a JSON response.
+      context.response.body = enrichedSecondaryData;
+      context.response.status = 200;
+    } catch (err) {
+      console.error("Failed to fetch data:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch data" };
+    }
+  })
+  .get("/assets_by_space", async (context) => {
+    // Create a Supabase client with the Auth context of the logged in user.
+    const supabase = createClient(
+      // Supabase API URL - env var exported by default.
+      Deno.env.get("SUPABASE_URL") ?? "",
+      // Supabase API ANON KEY - env var exported by default.
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // Create client with Auth context of the user that called the function.
+      // This way your row-level-security (RLS) policies are applied.
+      // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    // Assuming the URL might be "/assets?asset_begin=0&asset_end=10&space_id=456"
+    const space_contract_addr =
+      context.request.url.searchParams.get("space_addr");
+    const { data, error } = await supabase
+      .from("bodhi_text_assets")
+      .select()
+      .eq("creator", space_contract_addr);
+    context.response.body = data;
   });
 
 const app = new Application();

@@ -31,7 +31,7 @@ const ETHSpace: NextPage = () => {
   const [datasetList, _setDatasetList] = useState(false);
   //获取目前提供的数据集选项
   const [options, setOptions] = useState<string[]>([]);
-  const [itemId, setItemId] = useState<number>();
+  // const [itemId, setItemId] = useState<number>();
   //获取用户选择的数据集
   const [dataset, setDataset] = useState("mixed");
   //获取用户搜索的prompt
@@ -96,54 +96,58 @@ const ETHSpace: NextPage = () => {
   };
 
   const handleonClick = async () => {
+    console.log("searchPrompt: " + searchPrompt);
 
-    console.log("searchPrompt:" + searchPrompt);
-    const response = await fetch("https://embedding-search.deno.dev/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: searchPrompt,
-      }),
-      // mode: "no-cors",
-    });
-    const data = await response.json();
-    console.log("data:", data);
+    // Construct the URL with query parameters
+    const url = new URL('https://bodhi-data.deno.dev/text_search');
+    url.searchParams.append('keyword', searchPrompt);
+    url.searchParams.append('table_name', 'bodhi_text_assets'); // assuming the table name
+    url.searchParams.append('column', 'content'); // assuming you are searching in 'content' column
 
-    // 1. setItemId
-    setItemId(data.item_id);
-    console.log("item_id: " + data.item_id);
+    try {
+        const res = await fetch(url.toString(), {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+            }
+        });
 
-    // 2. wait 1 sec
-    await timeout(1000);
+        if (!res.ok) throw new Error('Network response was not ok');
 
-    // 3. query for data
-    const response2 = await fetch("https://query-bodhi-user-search.deno.dev", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        id: data.item_id,
-      }),
-      // mode: "no-cors",
-    });
-    const data2 = await response2.json();
-    console.log("data2: ", data2);
+        const data = await res.json();
+        console.log(data);
 
-    const res1: resultByDataset = {
-      dataset_id: "bodhi-text-contents",
-      results: data2.resp.data.map((item: { uuid: any; data: any; metadata: any }) => {
-        return {
-          id: item.uuid,
-          data: item.data,
-          metadata: item.metadata,
+        // record the user search history.
+        await fetch("https://embedding-search.deno.dev/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text: searchPrompt,
+          }),
+        });
+        
+        const resultsWithAbstract = data.map(item => {
+          //Extract the first line of the content as the abstract
+          const firstNewLineIndex = item.content.indexOf('\n');
+          const abstract = firstNewLineIndex !== -1 ? item.content.substring(0, firstNewLineIndex) : item.content;
+          return {
+              ...item,
+              abstract: abstract
+          };
+      });
+        // Assuming the API returns data in a format that can be directly used or adjust as needed
+        const res1 = {
+            dataset_id: "bodhi-text-contents",
+            results: resultsWithAbstract,
         };
-      }),
-    };
-    console.log("res1: ", res1);
-    setRes([res1]);
+
+        console.log("res1: ", res1);
+        setRes([res1]); // Assuming setRes is the function to update your component state
+    } catch (error) {
+      console.error('Failed to fetch:', error);
+    }
   };
   return (
     <div className="grid lg:grid-cols-2 flex-grow">
@@ -264,11 +268,20 @@ const ETHSpace: NextPage = () => {
                       <div className="divider"></div>
                       <span className="text-xl">Data</span>
                       <div>
-                        <ReactMarkdown>{item.data}</ReactMarkdown>
+                        <ReactMarkdown>{item.abstract}</ReactMarkdown>
                       </div>
-                      <span className="text-xl">Metadata</span>
                       <pre className="text-base">
-                        <b>Creator:</b> {item.metadata.creator}
+                        <b>Creator:</b> {item.creator}
+                      </pre>
+                      <pre className="text-base">
+                        <b>Bodhi ID(view the full content in Bodhi👉): </b>
+                        <a href={"https://bodhi.wtf/" + item.id_on_chain} target="_blank" rel="noreferrer">
+                          <button className="btn join-item">{item.id_on_chain}</button>
+                        </a>
+                      </pre>
+                      {/* <span className="text-xl">Metadata</span>
+                      <pre className="text-base">
+                        <b>Creator:</b> {item.creator}
                       </pre>
                       <pre className="text-base">
                         <b>Bodhi ID(view the full content in Bodhi👉): </b>
@@ -307,7 +320,7 @@ const ETHSpace: NextPage = () => {
                         className="btn join-item"
                       >
                         Like this asset 👍🏻!
-                      </button>
+                      </button> */}
                     </div>
                   ))}
                 </div>
