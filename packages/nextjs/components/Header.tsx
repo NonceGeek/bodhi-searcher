@@ -17,6 +17,10 @@ export const menuLinks: HeaderMenuLink[] = [
     label: "Home",
     href: "/",
   },
+  {
+    label: "AI Bot for Bodhi",
+    href: "https://arweave.noncegeek.com",
+  },
   // {
   //   label: "Tagger",
   //   href: "/debug",
@@ -45,6 +49,7 @@ export const HeaderMenuLinks = () => {
           <li key={href}>
             <Link
               href={href}
+              target={href == "/" ? undefined : "_blank"}
               passHref
               className={`${
                 isActive ? "bg-secondary shadow-md" : ""

@@ -146,6 +146,8 @@ router
     const key = queryParams.get("keyword");
     const tableName = queryParams.get("table_name");
     const column = queryParams.get("column");
+    const limit = parseInt(queryParams.get("limit"), 10); // Get limit from query and convert to integer
+    const onlyTitle = queryParams.has("only_title"); // Check if only_title param exists
 
     // List of searchable tables
     const searchableTables = ["bodhi_text_assets", "bodhi_text_assets_k_v"];
@@ -165,19 +167,32 @@ router
     );
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from(tableName)
         .select("*") // Select all columns initially
-        .textSearch(column, key);
+        .textSearch(column, key)
+        .order('id_on_chain', { ascending: false }); // Order results by id_on_chain in descending order
+
+      if (!isNaN(limit) && limit > 0) {
+        query = query.limit(limit); // Apply limit to the query if valid
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         throw error;
       }
 
-      // Process the data to remove the 'embedding' column if it exists
+      // Modify data based on only_title parameter
       const processedData = data.map((item) => {
-        const { embedding, ...rest } = item; // Destructure to exclude 'embedding', only if it exists
-        return rest;
+        if (onlyTitle) {
+          const { content, ...rest } = item; // Exclude content from the result
+          const firstLine = content?.split("\n")[0] || ""; // Get the first line of the content as abstract
+          return { ...rest, abstract: firstLine }; // Return other data with abstract
+        } else {
+          const { embedding, ...rest } = item; // Exclude embedding from the result if it exists
+          return rest;
+        }
       });
 
       context.response.status = 200;
@@ -415,6 +430,24 @@ router
     } else {
       context.response.body = { result: "Auth unPass" };
     }
+  })
+  .get("/assets_index_latest", async (context) => {
+    const supabase = createClient(
+      // Supabase API URL - env var exported by default.
+      Deno.env.get("SUPABASE_URL") ?? "",
+      // Supabase API ANON KEY - env var exported by default.
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // Create client with Auth context of the user that called the function.
+      // This way your row-level-security (RLS) policies are applied.
+      // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    const { data, error } = await supabase
+    .from("bodhi_indexer")
+    .select('index')
+    .eq('name', 'bodhi')
+    .single();
+    context.response.body = data;
   })
   .get("/assets", async (context) => {
     // Create a Supabase client with the Auth context of the logged in user.
