@@ -15,6 +15,11 @@ import { oakCors } from "https://deno.land/x/cors/mod.ts";
 import { ethers } from "https://cdn.skypack.dev/ethers@5.6.8";
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { render } from "@deno/gfm";
+import { gql } from "https://deno.land/x/graphql_tag@0.0.1/mod.ts";
+import { print } from "https://deno.land/x/graphql_deno@v15.0.0/mod.ts";
+
+
 
 console.log("Hello from Functions!");
 
@@ -73,7 +78,148 @@ async function checkTokenHold(addr, assetId, minHold) {
   }
 }
 
+// Helper function to escape XML special characters
+function escapeXml(unsafe: string | null | undefined): string {
+  if (unsafe == null) return "";
+  return unsafe.replace(/[<>&'"]/g, (c) => {
+    switch (c) {
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case "&":
+        return "&amp;";
+      case "'":
+        return "&apos;";
+      case '"':
+        return "&quot;";
+    }
+    return c;
+  });
+}
+
+async function getAssetsByAuthor(supabase, author, onlyTitle, cursor, limit) {
+  let query = supabase
+    .from("bodhi_text_assets")
+    .select("*")
+    .eq("author_true", author.toLowerCase())
+    .order("id", { ascending: false })
+    .limit(limit);
+
+  if (cursor) {
+    query = query.lt("id", cursor + 1);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  const processedData = data.map((item) => {
+    if (onlyTitle) {
+      const { content, ...rest } = item;
+      const lines = content?.split("\n") || [];
+      const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+      const abstract = firstLine.trim().startsWith("#")
+        ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+        : firstLine.trim();
+      const fiveLine = lines.slice(1, 5).join("\n") || "";
+      return { ...rest, abstract, fiveLine };
+    } else {
+      const { embedding, ...rest } = item;
+      const lines = item.content?.split("\n") || [];
+      const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+      const abstract = firstLine.trim().startsWith("#")
+        ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+        : firstLine.trim();
+      const fiveLine = lines.slice(1, 5).join("\n") || "";
+      return { ...rest, abstract, fiveLine };
+    }
+  });
+
+  const nextCursor = data.length === limit ? data[data.length - 1].id : null;
+
+  return { assets: processedData, nextCursor };
+}
+
+async function getAssetsBySpace(
+  supabase,
+  spaceContractAddr,
+  onlyTitle,
+  cursor,
+  limit
+) {
+  let query = supabase
+    .from("bodhi_text_assets")
+    .select()
+    .eq("creator", spaceContractAddr.toLowerCase())
+    .order("id", { ascending: false })
+    .limit(limit);
+
+  if (cursor) {
+    query = query.lt("id", cursor + 1);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  const processedData = data.map((item) => {
+    if (onlyTitle) {
+      const { content, ...rest } = item;
+      const lines = content?.split("\n") || [];
+      const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+      const abstract = firstLine.trim().startsWith("#")
+        ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+        : firstLine.trim();
+      const fiveLine = lines.slice(1, 5).join("\n") || "";
+      return { ...rest, abstract, fiveLine };
+    } else {
+      const { embedding, ...rest } = item;
+      const lines = item.content?.split("\n") || [];
+      const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+      const abstract = firstLine.trim().startsWith("#")
+        ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+        : firstLine.trim();
+      const fiveLine = lines.slice(1, 5).join("\n") || "";
+      return { ...rest, abstract, fiveLine };
+    }
+  });
+
+  const nextCursor = data.length === limit ? data[data.length - 1].id : null;
+
+  return { assets: processedData, nextCursor };
+}
+
 router
+  .get("/spaces", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    try {
+      // Assuming 'name' is a non-null field you want to check
+      const { data, error } = await supabase
+        .from("bodhi_spaces")
+        .select("*")
+        .not("name", "is", "NULL");
+
+      if (error) {
+        throw error;
+      }
+
+      context.response.status = 200;
+      context.response.body = data; // Send the retrieved data as the response
+    } catch (err) {
+      console.error("Error fetching spaces:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch spaces" };
+    }
+  })
   .get("/set_img", async (context) => {
     const queryParams = context.request.url.searchParams;
     let asset_id = parseInt(queryParams.get("asset_id"), 10);
@@ -141,6 +287,40 @@ router
     // Return the latest ID
     context.response.body = { latestId: latestId };
   })
+  .get("/img_search", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const key = queryParams.get("keyword");
+    const limit = parseInt(queryParams.get("limit"), 10); 
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    try {
+      let query = supabase
+        .from("bodhi_img_assets_k_v")
+        .select("*") // Select all columns initially
+        .textSearch("description", key)
+        .order("id_on_chain", { ascending: false }); 
+
+        if (!isNaN(limit) && limit > 0) {
+          query = query.limit(limit); // Apply limit to the query if valid
+        }
+  
+        const { data, error } = await query;
+        
+        if (error) {
+          throw error;
+        }
+  
+        context.response.status = 200;
+        context.response.body = data;
+      } catch (error) {
+        console.error("Error fetching data:", error);
+        context.response.status = 500;
+        context.response.body = { error: "Failed to fetch data" };
+      }
+  })
   .get("/text_search", async (context) => {
     const queryParams = context.request.url.searchParams;
     const key = queryParams.get("keyword");
@@ -171,7 +351,7 @@ router
         .from(tableName)
         .select("*") // Select all columns initially
         .textSearch(column, key)
-        .order('id_on_chain', { ascending: false }); // Order results by id_on_chain in descending order
+        .order("id_on_chain", { ascending: false }); // Order results by id_on_chain in descending order
 
       if (!isNaN(limit) && limit > 0) {
         query = query.limit(limit); // Apply limit to the query if valid
@@ -187,8 +367,12 @@ router
       const processedData = data.map((item) => {
         if (onlyTitle) {
           const { content, ...rest } = item; // Exclude content from the result
-          const firstLine = content?.split("\n")[0] || ""; // Get the first line of the content as abstract
-          return { ...rest, abstract: firstLine }; // Return other data with abstract
+          const lines = content?.split("\n") || [];
+          const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+          const abstract = firstLine.trim().startsWith("#")
+            ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+            : firstLine.trim();
+          return { ...rest, abstract }; // Return other data with abstract
         } else {
           const { embedding, ...rest } = item; // Exclude embedding from the result if it exists
           return rest;
@@ -443,10 +627,10 @@ router
     );
 
     const { data, error } = await supabase
-    .from("bodhi_indexer")
-    .select('index')
-    .eq('name', 'bodhi')
-    .single();
+      .from("bodhi_indexer")
+      .select("index")
+      .eq("name", "bodhi")
+      .single();
     context.response.body = data;
   })
   .get("/assets", async (context) => {
@@ -463,7 +647,7 @@ router
 
     // Assuming the URL might be "/assets?asset_begin=0&asset_end=10&space_id=456"
     const queryParams = context.request.url.searchParams;
-
+    const onlyTitle = queryParams.has("only_title"); // Check if only_title param exists
     if (queryParams.has("asset_begin")) {
       // Done: get data from asset begin to asset to, return the arrary of assets in bodhi_text_assets which id_on_chain = asset_num
       const assetBegin = parseInt(queryParams.get("asset_begin"), 10);
@@ -490,7 +674,22 @@ router
         return;
       }
 
-      context.response.body = { assets: data };
+      const processedData = data.map((item) => {
+        if (onlyTitle) {
+          const { content, ...rest } = item; // Exclude content from the result
+          const lines = content?.split("\n") || [];
+          const firstLine = lines.find((line) => line.trim() !== "") || ""; // Find the first non-empty line
+          const abstract = firstLine.trim().startsWith("#")
+            ? firstLine.trim().replace(/^#+\s*/, "") // Remove leading '#' and spaces
+            : firstLine.trim();
+          return { ...rest, abstract }; // Return other data with abstract
+        } else {
+          const { embedding, ...rest } = item; // Exclude embedding from the result if it exists
+          return rest;
+        }
+      });
+
+      context.response.body = { assets: processedData };
       return;
     }
 
@@ -641,26 +840,617 @@ router
       context.response.body = { error: "Failed to fetch data" };
     }
   })
+
   .get("/assets_by_space", async (context) => {
-    // Create a Supabase client with the Auth context of the logged in user.
     const supabase = createClient(
-      // Supabase API URL - env var exported by default.
       Deno.env.get("SUPABASE_URL") ?? "",
-      // Supabase API ANON KEY - env var exported by default.
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-      // Create client with Auth context of the user that called the function.
-      // This way your row-level-security (RLS) policies are applied.
-      // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+    const queryParams = context.request.url.searchParams;
+    const onlyTitle = queryParams.has("only_title");
+    const spaceContractAddr = queryParams.get("space_addr");
+    let cursor = queryParams.get("cursor");
+    const limit = parseInt(queryParams.get("limit") || "10", 10);
+
+    if (!spaceContractAddr) {
+      context.response.status = 400;
+      context.response.body = { error: "space_addr parameter is required" };
+      return;
+    }
+
+    try {
+      const result = await getAssetsBySpace(
+        supabase,
+        spaceContractAddr,
+        onlyTitle,
+        cursor,
+        limit
+      );
+      context.response.body = result;
+    } catch (err) {
+      console.error("Error fetching assets by space:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch assets by space" };
+    }
+  })
+  .get("/collections", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // Assuming the URL might be "/assets?asset_begin=0&asset_end=10&space_id=456"
-    const space_contract_addr =
-      context.request.url.searchParams.get("space_addr");
-    const { data, error } = await supabase
-      .from("bodhi_text_assets")
-      .select()
-      .eq("creator", space_contract_addr);
-    context.response.body = data;
+    try {
+      const { data, error } = await supabase
+        .from("bodhi_collections")
+        .select("*");
+
+      if (error) {
+        throw error;
+      }
+
+      context.response.status = 200;
+      context.response.body = data; // Send the retrieved data as the response
+    } catch (err) {
+      console.error("Error fetching collections:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch collections" };
+    }
+  })
+
+  .get("/gen_rss", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const queryParams = context.request.url.searchParams;
+    let author = queryParams.get("author");
+
+    const title = queryParams.get("title") || "RSS Feed";
+    const description = queryParams.get("description") || "Generated RSS feed";
+    const cursor = queryParams.get("cursor") || null;
+    const limit = queryParams.get("limit") || 100;
+
+    if (!author) {
+      context.response.status = 400;
+      context.response.body = { error: "Author parameter is required" };
+      return;
+    }
+
+    try {
+      // Query the bodhi_rss_feeds table
+      const { data: rssData, error: rssError } = await supabase
+        .from("bodhi_rss_feeds")
+        .select("feed_id, user_id")
+        .eq("unique_id", author.toLowerCase())
+        .single();
+
+      if (rssError) {
+        console.error("The feed is not verified yet:", rssError);
+      }
+
+      const result = await getAssetsByAuthor(
+        supabase,
+        author,
+        false,
+        cursor,
+        limit
+      );
+      // Generate RSS XML
+      context.response.headers.set(
+        "Content-Type",
+        "application/rss+xml; charset=utf-8"
+      );
+      const rssItems = result.assets
+        .map(
+          (asset) => `
+        <item>
+          <title>${escapeXml(asset.abstract)}</title>
+          <link>https://bodhi.wtf/${asset.id_on_chain}</link>
+          <guid>https://bodhi.wtf/${asset.id_on_chain}</guid>
+          <pubDate>${new Date(asset.created_at).toUTCString()}</pubDate>
+          <description><![CDATA[${render(asset.fiveLine)}]]></description>
+          <content:encoded><![CDATA[
+            ${render(asset.content)}
+            <div style="display: flex; justify-content: center; align-items: center; margin: 0 auto;">
+              <a href="https://bodhi.wtf/${asset.id_on_chain}">
+                <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                  Comment 留言
+                </button>
+              </a>
+              <a href="https://bodhi.wtf/${asset.id_on_chain}?action=buy">
+                <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                  Buy Shares 购买份额
+                </button>
+              </a>
+            </div>
+          ]]></content:encoded>
+          <author>${escapeXml(author)}</author>
+        </item>
+      `
+        )
+        .join("");
+
+      let feedIdUserIdString = "";
+      if (rssData) {
+        feedIdUserIdString = ` feedId:${rssData.feed_id}+userId:${rssData.user_id}`;
+      }
+
+      const rss = `<?xml version="1.0" encoding="UTF-8" ?>
+      <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+        <channel>
+          <title>${escapeXml(title)}</title>
+          <link>https://bodhi.wtf/address/${author}</link>
+          <description>${escapeXml(
+            description
+          )}${feedIdUserIdString}</description>
+          <language>zh-cn</language>
+          ${rssItems}
+        </channel>
+      </rss>`;
+
+      context.response.body = rss;
+    } catch (err) {
+      console.error("Error generating RSS:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to generate RSS feed" };
+    }
+  })
+  .get("/gen_rss_by_space", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const spaceContractAddr = queryParams.get("space_addr");
+    const cursor = queryParams.get("cursor") || null;
+    const limit = parseInt(queryParams.get("limit") || "100", 10);
+
+    if (!spaceContractAddr) {
+      context.response.status = 400;
+      context.response.body = { error: "space_addr parameter is required" };
+      return;
+    }
+
+    try {
+      // Query the bodhi_spaces table to get the id_on_chain
+      const { data: spaceData, error: spaceError } = await supabase
+        .from("bodhi_spaces")
+        .select()
+        .eq("contract_addr", spaceContractAddr)
+        .single();
+
+      if (spaceError || !spaceData) {
+        throw new Error("Space not found");
+      }
+
+      const spaceIdOnChain = spaceData.id_on_chain;
+
+      // Query the bodhi_rss_feeds table
+      const { data: rssData, error: rssError } = await supabase
+        .from("bodhi_rss_feeds")
+        .select("feed_id, user_id")
+        .eq("unique_id", spaceContractAddr.toLowerCase())
+        .single();
+
+      if (rssError) {
+        console.error("The feed is not verified yet:", rssError);
+      }
+
+      const result = await getAssetsBySpace(
+        supabase,
+        spaceContractAddr,
+        false,
+        cursor,
+        limit
+      );
+
+      // Generate RSS XML
+      context.response.headers.set(
+        "Content-Type",
+        "application/rss+xml; charset=utf-8"
+      );
+      const rssItems = result.assets
+        .map(
+          (asset) => `
+        <item>
+          <title>${escapeXml(asset.abstract)}</title>
+          <link>https://bodhi.wtf/space/${spaceIdOnChain}/${
+            asset.id_on_chain
+          }</link>
+          <guid>https://bodhi.wtf/space/${spaceIdOnChain}/${
+            asset.id_on_chain
+          }</guid>
+          <pubDate>${new Date(asset.created_at).toUTCString()}</pubDate>
+          <description><![CDATA[${render(asset.fiveLine)}]]></description>
+          <content:encoded><![CDATA[
+            ${render(asset.content)}
+            <a href="https://bodhi.wtf/${asset.id_on_chain}">
+                <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                  Comment 留言
+                </button>
+              </a>
+              <a href="https://bodhi.wtf/${asset.id_on_chain}?action=buy">
+                <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                  Buy Shares 购买份额
+                </button>
+              </a>
+          ]]></content:encoded>
+          <author>${escapeXml(spaceData.name)}</author>
+        </item>
+      `
+        )
+        .join("");
+
+      let feedIdUserIdString = "";
+      if (rssData) {
+        feedIdUserIdString = ` feedId:${rssData.feed_id}+userId:${rssData.user_id}`;
+      }
+
+      const rss = `<?xml version="1.0" encoding="UTF-8" ?>
+      <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+        <channel>
+          <title>${spaceData.name}</title>
+          <link>https://bodhi.wtf/space/${spaceIdOnChain}</link>
+          <description>${escapeXml(
+            spaceData.description.replace(/\n/g, " ")
+          )}${feedIdUserIdString}</description>
+          <language>zh-cn</language>
+          ${rssItems}
+        </channel>
+      </rss>`;
+
+      context.response.body = rss;
+    } catch (err) {
+      console.error("Error generating RSS for space:", err);
+      context.response.status = 500;
+      context.response.body = {
+        error: "Failed to generate RSS feed for space",
+      };
+    }
+  })
+  .get("/assets_by_author", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const author = queryParams.get("author");
+    const onlyTitle = queryParams.has("only_title");
+    let cursor = queryParams.get("cursor");
+    cursor = parseInt(cursor, 10);
+    const limit = parseInt(queryParams.get("limit") || "10", 10);
+
+    if (!author) {
+      context.response.status = 400;
+      context.response.body = { error: "Author parameter is required" };
+      return;
+    }
+
+    try {
+      const result = await getAssetsByAuthor(
+        supabase,
+        author,
+        onlyTitle,
+        cursor,
+        limit
+      );
+      context.response.status = 200;
+      context.response.body = result;
+    } catch (err) {
+      console.error("Error fetching assets by author:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch assets by author" };
+    }
+  })
+  // curl -X GET 'https://bodhi-data.deno.dev/set_rss?addr=0x1234567890abcdef&type=author&title=John%20Doe&description=My%20awesome%20RSS%20feed&user_id=12345&feed_id=67890'
+  .get("/set_rss", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const addr = queryParams.get("addr");
+    const type = queryParams.get("type");
+    const title = queryParams.get("title");
+    const description = queryParams.get("description");
+    const user_id = queryParams.get("user_id");
+    const feed_id = queryParams.get("feed_id");
+
+    if (!addr || !type || !user_id || !feed_id) {
+      context.response.status = 400;
+      context.response.body = {
+        error: "All parameters (addr, type, user_id, feed_id) are required",
+      };
+      return;
+    }
+
+    try {
+      // First, check if an entry with the given address already exists
+      const { data: existingData, error: existingError } = await supabase
+        .from("bodhi_rss_feeds")
+        .select("*")
+        .eq("unique_id", addr.toLowerCase())
+        .single();
+
+      if (existingError && existingError.code !== "PGRST116") {
+        // PGRST116 is the error code for "Results contain 0 rows" in PostgREST
+        throw existingError;
+      }
+
+      if (existingData) {
+        context.response.status = 200;
+        context.response.body = {
+          message: "RSS feed already verified",
+          data: existingData,
+        };
+        return;
+      }
+
+      // If no existing entry, proceed with insertion
+      const { data, error } = await supabase.from("bodhi_rss_feeds").insert({
+        unique_id: addr.toLowerCase(),
+        type,
+        title,
+        description,
+        user_id,
+        feed_id,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      context.response.status = 200;
+      context.response.body = {
+        message: "RSS feed information updated successfully",
+        data,
+      };
+    } catch (err) {
+      console.error("Error updating RSS feed information:", err);
+      context.response.status = 500;
+      context.response.body = {
+        error: "Failed to update RSS feed information",
+      };
+    }
+  })
+  .get("/assets_by_space_and_parent", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const spaceId = queryParams.get("space_id");
+    const parentId = queryParams.get("parent_id");
+
+    if (!spaceId || !parentId) {
+      context.response.status = 400;
+      context.response.body = {
+        error: "space_id and parent_id parameters are required",
+      };
+      return;
+    }
+
+    const query = gql`
+    query GetSpacePostsBySpaceIdAndParentId {
+        spacePosts(where: { spaceId: "5", parentId: "15353" }) {
+          id
+          assetId
+          creator {
+            id
+            address
+          }
+          asset {
+            id
+            arTxId
+          }
+          isRoot
+          rootId
+          totalReplies
+          removedFromSpace
+        }
+      }
+    `;
+
+    // const queryString = print(query);
+
+    // console.log(queryString);
+
+    const variables = {
+      spaceId,
+      parentId,
+    };
+
+    const THE_GRAPH_API_KEY = Deno.env.get("THE_GRAPH_API_KEY");
+    if (!THE_GRAPH_API_KEY) {
+      console.error(
+        "THE_GRAPH_API_KEY is not set in the environment variables"
+      );
+      context.response.status = 500;
+      context.response.body = { error: "Server configuration error" };
+      return;
+    }
+
+    console.log(query);
+    try {
+      const response = await fetch(
+        `https://gateway-arbitrum.network.thegraph.com/api/${THE_GRAPH_API_KEY}/subgraphs/id/9wbJZrTfDRf7uF8Db9XTUq9Fezzn58EgbLfV26LnXKke`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: print(query),
+            variables: variables,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log(result);
+      if (result.errors) {
+        throw new Error(result.errors[0].message);
+      }
+
+      context.response.status = 200;
+      context.response.body = {
+        data: result.data,
+      };
+    } catch (err) {
+      console.error("Error fetching space posts:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch space posts" };
+    }
+  })
+  .get("/gen_rss_by_post", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const queryParams = context.request.url.searchParams;
+    const spaceId = queryParams.get("space_id");
+    const parentId = queryParams.get("parent_id");
+    const title = queryParams.get("title") || "Bodhi Space Post RSS Feed";
+    const description = queryParams.get("description") || "RSS feed for Bodhi space post and its replies";
+
+    if (!spaceId || !parentId) {
+      context.response.status = 400;
+      context.response.body = { error: "space_id and parent_id parameters are required" };
+      return;
+    }
+
+    try {
+      // Fetch RSS feed information
+      const { data: rssData, error: rssError } = await supabase
+        .from("bodhi_rss_feeds")
+        .select("feed_id, user_id")
+        .eq("unique_id", parentId)
+        .single();
+
+      if (rssError && rssError.code !== "PGRST116") {
+        console.error("Error fetching RSS feed information:", rssError);
+      }
+
+      let feedIdUserIdString = "";
+      if (rssData) {
+        feedIdUserIdString = ` feedId:${rssData.feed_id}+userId:${rssData.user_id}`;
+      }
+
+      // Fetch space posts from The Graph
+      const query = gql`
+        query GetSpacePostsBySpaceIdAndParentId($spaceId: String!, $parentId: String!) {
+          spacePosts(where: { spaceId: $spaceId, parentId: $parentId }) {
+            id
+            assetId
+            creator {
+              address
+            }
+            asset {
+              arTxId
+            }
+            isRoot
+            rootId
+            totalReplies
+          }
+        }
+      `;
+
+      const variables = { spaceId, parentId };
+
+      const graphResponse = await fetch(
+        `https://gateway-arbitrum.network.thegraph.com/api/${Deno.env.get("THE_GRAPH_API_KEY")}/subgraphs/id/9wbJZrTfDRf7uF8Db9XTUq9Fezzn58EgbLfV26LnXKke`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: print(query), variables }),
+        }
+      );
+
+      if (!graphResponse.ok) {
+        throw new Error(`HTTP error! status: ${graphResponse.status}`);
+      }
+
+      const graphResult = await graphResponse.json();
+      if (graphResult.errors) {
+        throw new Error(graphResult.errors[0].message);
+      }
+
+      const spacePosts = graphResult.data.spacePosts;
+      const assetIds = spacePosts.map(post => post.assetId);
+
+      // Fetch content from Supabase
+      const { data: assets, error } = await supabase
+        .from("bodhi_text_assets")
+        .select("*")
+        .in("id_on_chain", assetIds);
+
+      if (error) {
+        throw error;
+      }
+
+      // Sort assets by id_on_chain in descending order
+      assets.sort((a, b) => b.id_on_chain - a.id_on_chain);
+
+      // Generate RSS XML
+      context.response.headers.set("Content-Type", "application/rss+xml; charset=utf-8");
+
+      const rssItems = assets.map(asset => {
+        const spacePost = spacePosts.find(post => post.assetId === asset.id_on_chain);
+        
+        // Extract title from the first line of content
+        const lines = asset.content.split('\n');
+        const title = lines[0].replace(/^#+\s*/, '').trim() || "No title";
+        
+        return `
+          <item>
+            <title>${escapeXml(title)}</title>
+            <link>https://bodhi.wtf/space/${spaceId}/${asset.id_on_chain}</link>
+            <guid>https://bodhi.wtf/space/${spaceId}/${asset.id_on_chain}</guid>
+            <pubDate>${new Date(asset.created_at).toUTCString()}</pubDate>
+            <description><![CDATA[${render(asset.content.slice(0, 500))}...]]></description>
+            <content:encoded><![CDATA[
+              ${render(asset.content)}
+
+              <div style="display: flex; justify-content: center; align-items: center; margin: 0 auto;">
+                <a href="https://bodhi.wtf/space/${spaceId}/${asset.id_on_chain}">
+                  <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                    Comment 留言
+                  </button>
+                </a>
+                <a href="https://bodhi.wtf/space/${spaceId}/${asset.id_on_chain}?action=buy">
+                  <button style="background-color: rgb(0, 95, 189) !important; color: white !important; border: none; border-radius: 4px; font-size: 18px; cursor: pointer; font-weight: 400; padding: 10px 16px; line-height: 1.3333333;">
+                    Buy Shares 购买份额
+                  </button>
+                </a>
+              </div>
+            ]]></content:encoded>
+            <author>${escapeXml(asset.author_true)}</author>
+          </item>
+        `;
+      }).join("");
+
+      const rss = `<?xml version="1.0" encoding="UTF-8" ?>
+      <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+        <channel>
+          <title>${escapeXml(title)}</title>
+          <link>https://bodhi.wtf/space/${spaceId}/${parentId}</link>
+          <description>${escapeXml(description)}${feedIdUserIdString}</description>
+          <language>en-us</language>
+          ${rssItems}
+        </channel>
+      </rss>`;
+
+      context.response.body = rss;
+    } catch (err) {
+      console.error("Error generating RSS for space post:", err);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to generate RSS feed for space post" };
+    }
   });
 
 const app = new Application();

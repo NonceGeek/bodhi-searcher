@@ -2,8 +2,8 @@ import { SetStateAction, useEffect, useRef, useState } from "react";
 import { NextPage } from "next";
 // import { type } from "os";
 import ReactMarkdown from "react-markdown";
-import { useScaffoldContractRead, useScaffoldContractWrite } from "~~/hooks/scaffold-eth";
 import { parseEther } from "viem";
+import { useScaffoldContractRead, useScaffoldContractWrite } from "~~/hooks/scaffold-eth";
 
 //定义一个新的数据类型来记录后端返回的数据
 export type resultByDataset = {
@@ -23,7 +23,7 @@ function timeout(delay: number) {
 }
 
 const ETHSpace: NextPage = () => {
-  //在对后端发起请求后，将response的内容保存在results中
+  //在对后端发起求后，将response的内容保存在results中
   //如果用户选择使用mixed模式，则使用resultByDataset来记录结果
   const [res, setRes] = useState<resultByDataset[]>([]);
   //设置默认是在我们提供的数据集而不是公共数据集中查询
@@ -41,7 +41,7 @@ const ETHSpace: NextPage = () => {
   // Ref to attach to the audio element
 
   useEffect(() => {
-    setOptions(["bodhi-text-contents"]);
+    setOptions(["bodhi-text-contents", "bodhi-imgs"]);
   }, []);
 
   // const { data: totalCounter } = useScaffoldContractRead({
@@ -69,10 +69,7 @@ const ETHSpace: NextPage = () => {
   const { writeAsync, isLoading, isMining } = useScaffoldContractWrite({
     contractName: "vectorTagger",
     functionName: "tagItem",
-    args: [
-      assetId,
-      JSON.stringify({like: true})
-    ],
+    args: [assetId, JSON.stringify({ like: true })],
     value: parseEther("0"),
     blockConfirmations: 1,
     onBlockConfirmation: txnReceipt => {
@@ -80,7 +77,7 @@ const ETHSpace: NextPage = () => {
     },
   });
 
-  const likeAsset = (assetId: SetStateAction<number>) =>{
+  const likeAsset = (assetId: SetStateAction<number>) => {
     setAssetId(assetId);
     writeAsync();
   };
@@ -98,25 +95,32 @@ const ETHSpace: NextPage = () => {
   const handleonClick = async () => {
     console.log("searchPrompt: " + searchPrompt);
 
-    // Construct the URL with query parameters
-    const url = new URL('https://bodhi-data.deno.dev/text_search');
-    url.searchParams.append('keyword', searchPrompt);
-    url.searchParams.append('table_name', 'bodhi_text_assets'); // assuming the table name
-    url.searchParams.append('column', 'content'); // assuming you are searching in 'content' column
+    // Determine the URL based on the selected dataset
+    let url;
+    if (dataset === "bodhi-imgs") {
+      url = new URL("https://bodhi-data.deno.dev/img_search");
+    } else {
+      url = new URL("https://bodhi-data.deno.dev/text_search");
+      url.searchParams.append("table_name", "bodhi_text_assets"); // assuming the table name
+      url.searchParams.append("column", "content"); // assuming you are searching in 'content' column
+    }
+
+    // Append the keyword to the URL
+    url.searchParams.append("keyword", searchPrompt);
 
     try {
-        const res = await fetch(url.toString(), {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-            }
-        });
+      const res = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
-        if (!res.ok) throw new Error('Network response was not ok');
+      if (!res.ok) throw new Error("Network response was not ok");
 
-        const data = await res.json();
-        console.log(data);
+      const data = await res.json();
 
+      if (dataset !== "bodhi-imgs") {
         // record the user search history.
         await fetch("https://embedding-search.deno.dev/", {
           method: "POST",
@@ -127,26 +131,35 @@ const ETHSpace: NextPage = () => {
             text: searchPrompt,
           }),
         });
-        
+
         const resultsWithAbstract = data.map(item => {
-          //Extract the first line of the content as the abstract
-          const firstNewLineIndex = item.content.indexOf('\n');
+          // Extract the first line of the content as the abstract
+          const firstNewLineIndex = item.content.indexOf("\n");
           const abstract = firstNewLineIndex !== -1 ? item.content.substring(0, firstNewLineIndex) : item.content;
           return {
-              ...item,
-              abstract: abstract
+            ...item,
+            abstract: abstract,
           };
-      });
+        });
+
         // Assuming the API returns data in a format that can be directly used or adjust as needed
         const res1 = {
-            dataset_id: "bodhi-text-contents",
-            results: resultsWithAbstract,
+          dataset_id: dataset,
+          results: resultsWithAbstract,
         };
 
         console.log("res1: ", res1);
         setRes([res1]); // Assuming setRes is the function to update your component state
+      } else {
+        const result = {
+          dataset_id: "bodhi-imgs",
+          results: data,
+        };
+        console.log("data: ", data);
+        setRes([result]);
+      }
     } catch (error) {
-      console.error('Failed to fetch:', error);
+      console.error("Failed to fetch:", error);
     }
   };
   return (
@@ -262,68 +275,60 @@ const ETHSpace: NextPage = () => {
                 <div className="collapse-title bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content">
                   Results from {r.dataset_id}
                 </div>
-                <div className="collapse-content bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content">
-                  {r.results.map((item, index) => (
-                    <div key={index}>
-                      <div className="divider"></div>
-                      <span className="text-xl">Data</span>
-                      <div>
-                        <ReactMarkdown>{item.abstract}</ReactMarkdown>
-                      </div>
-                      <pre className="text-base">
-                        <b>Creator:</b> {item.creator}
-                      </pre>
-                      <pre className="text-base">
-                        <b>Bodhi ID(view the full content in Bodhi👉): </b>
-                        <a href={"https://bodhi.wtf/" + item.id_on_chain} target="_blank" rel="noreferrer">
-                          <button className="btn join-item">{item.id_on_chain}</button>
-                        </a>
-                      </pre>
-                      {/* <span className="text-xl">Metadata</span>
-                      <pre className="text-base">
-                        <b>Creator:</b> {item.creator}
-                      </pre>
-                      <pre className="text-base">
-                        <b>Bodhi ID(view the full content in Bodhi👉): </b>
-                        <a href={"https://bodhi.wtf/" + item.metadata.id} target="_blank" rel="noreferrer">
-                          <button className="btn join-item">{item.metadata.id}</button>
-                        </a>
-                      </pre>
-                      <pre className="text-base">
-                        <b>Type: </b>
-                        {item.metadata.type}
-                      </pre>
-                      <br></br>
-                      {item.metadata.audio && (
+                {dataset !== "bodhi-imgs" && (
+                  <div className="collapse-content bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content">
+                    {r.results.map((item, index) => (
+                      <div key={index}>
+                        <div className="divider"></div>
+                        <span className="text-xl">Data</span>
                         <div>
-                          <b>Play Music: </b>
-                          <audio src={item.metadata.audio}></audio>
-
-                          <audio ref={audioRef} src={item.metadata.audio} preload="metadata" />
-                          <button className="btn join-item" onClick={togglePlayPause}>
-                            {isPlaying ? "Pause" : "Play"}
-                          </button>
-                          <a href={item.metadata.audio} target="_blank" rel="noreferrer">
-                            <button className="btn join-item">Download</button>
-                          </a>
+                          <ReactMarkdown>{item.abstract}</ReactMarkdown>
                         </div>
-                      )}
-                      <span className="text-xl">id in vectorDB</span>
-                      <pre className="text-base">
-                        <b>{item.id}</b>
-                      </pre>
-                      <br></br>
-                      <button
-                        onClick={() => {
-                          likeAsset(item.metadata.id);
-                        }}
-                        className="btn join-item"
-                      >
-                        Like this asset 👍🏻!
-                      </button> */}
-                    </div>
-                  ))}
-                </div>
+                        <pre className="text-base">
+                          <b>Creator:</b> {item.creator}
+                        </pre>
+                        <pre className="text-base">
+                          <b>Bodhi ID(view the full content in Bodhi👉): </b>
+                          <a href={"https://bodhi.wtf/" + item.id_on_chain} target="_blank" rel="noreferrer">
+                            <button className="btn join-item">{item.id_on_chain}</button>
+                          </a>
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {dataset === "bodhi-imgs" && (
+                  <div className="collapse-content bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content">
+                    {r.results.map((item, index) => (
+                      <div key={index}>
+                        <div className="divider"></div>
+                        <div className="text-base">
+                          <img src={item.link} alt={item.description} />
+                        </div>
+                        <span className="text-xl">Category: {item.category}</span>
+                        <pre className="text-base">
+                          <b>Created At:</b> {new Date(item.created_at).toLocaleString()}
+                        </pre>
+                        <pre className="text-base">
+                          <b>Creator:</b> {item.creator}
+                        </pre>
+                        <pre className="text-base">
+                          <b>Description:</b> {item.description}
+                        </pre>
+                        <pre className="text-base">
+                          <b>ID:</b> {item.id}
+                        </pre>
+                        <pre className="text-base">
+                          <b>Bodhi ID(view the full content in Bodhi👉): </b>
+                          <a href={"https://bodhi.wtf/" + item.id_on_chain} target="_blank" rel="noreferrer">
+                            <button className="btn join-item">{item.id_on_chain}</button>
+                          </a>
+                        </pre>
+
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
