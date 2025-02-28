@@ -9,5 +9,8 @@
   },
   "imports": {
     "@deno/gfm": "jsr:@deno/gfm@^0.9.0"
+  },
+  "tasks": {
+    "start": "deno run --allow-net --allow-env sdk.tsx"
   }
 }

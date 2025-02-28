@@ -41,8 +41,25 @@ const ETHSpace: NextPage = () => {
   // Ref to attach to the audio element
 
   useEffect(() => {
-    setOptions(["bodhi-text-contents", "bodhi-imgs"]);
-  }, []);
+    // Get URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const setParam = urlParams.get('set');
+    
+    // Default options
+    const defaultOptions = ["bodhi-text-contents", "xiaolai", "bodhi-imgs"];
+    
+    // If set parameter exists, filter options to only include that value
+    if (setParam) {
+      const filteredOptions = defaultOptions.filter(option => option === setParam);
+      setOptions(filteredOptions.length > 0 ? filteredOptions : defaultOptions);
+      // Also set the dataset to match the parameter
+      if (filteredOptions.length > 0) {
+        setDataset(setParam);
+      }
+    } else {
+      setOptions(defaultOptions);
+    }
+  }, []); // Empty dependency array means this runs once on mount
 
   // const { data: totalCounter } = useScaffoldContractRead({
   //   contractName: "vectorTagger",
@@ -101,8 +118,13 @@ const ETHSpace: NextPage = () => {
       url = new URL("https://bodhi-data.deno.dev/img_search");
     } else {
       url = new URL("https://bodhi-data.deno.dev/text_search");
-      url.searchParams.append("table_name", "bodhi_text_assets"); // assuming the table name
-      url.searchParams.append("column", "content"); // assuming you are searching in 'content' column
+      // Set different table name based on dataset
+      if (dataset === "xiaolai") {
+        url.searchParams.append("table_name", "bodhi_text_assets_space_145");
+      } else {
+        url.searchParams.append("table_name", "bodhi_text_assets");
+      }
+      url.searchParams.append("column", "content");
     }
 
     // Append the keyword to the URL
@@ -115,6 +137,8 @@ const ETHSpace: NextPage = () => {
           "Content-Type": "application/json",
         },
       });
+
+      console.log("res", res);
 
       if (!res.ok) throw new Error("Network response was not ok");
 

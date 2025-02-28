@@ -195,6 +195,42 @@ async function getAssetsBySpace(
 }
 
 router
+  .get("/embedding_search", async (context) => {
+    // HINT: DO NOT DELETE: By default, the length of the embedding vector will be 1536 for text-embedding-3-small or 3072 for text-embedding-3-large .
+    // & the embedding size of llama3.2 is 3072.
+    const queryParams = context.request.url.searchParams;
+    const modelName = queryParams.get("model") || "llama3.2";
+    const key = queryParams.get("keyword");
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const response = await fetch("http://localhost:11434/api/embed", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: modelName,
+        input: key
+      })
+    });
+
+    const embedResult = await response.json();
+    const vectorString = `[${embedResult.embeddings.join(',')}]`;
+    console.log("vectorString", vectorString);
+
+    const resp = await supabase.rpc('embedding_search_bodhi_text_assets_k_v_space_145', {
+      query_embedding: vectorString,
+      match_threshold: 0.5, // Choose an appropriate threshold for your data
+      match_count: 10, // Choose the number of matches
+    })
+
+    console.log("resp", resp);
+
+    context.response.body = resp;
+  })
   .get("/spaces", async (context) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -328,9 +364,9 @@ router
     const column = queryParams.get("column");
     const limit = parseInt(queryParams.get("limit"), 10); // Get limit from query and convert to integer
     const onlyTitle = queryParams.has("only_title"); // Check if only_title param exists
-
+    console.log("tableName", tableName);
     // List of searchable tables
-    const searchableTables = ["bodhi_text_assets", "bodhi_text_assets_k_v"];
+    const searchableTables = ["bodhi_text_assets", "bodhi_text_assets_k_v", "bodhi_text_assets_k_v_space_145"];
 
     // Check if the table is allowed to be searched
     if (!searchableTables.includes(tableName)) {
@@ -346,6 +382,10 @@ router
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
+    console.log("tableName", tableName);
+    console.log("column", column);
+    console.log("key", key);
+
     try {
       let query = supabase
         .from(tableName)
@@ -358,6 +398,8 @@ router
       }
 
       const { data, error } = await query;
+
+      console.log("data", data);
 
       if (error) {
         throw error;
@@ -1217,12 +1259,12 @@ router
       };
     }
   })
-  .get("/assets_by_space_and_parent", async (context) => {
+  .get("/assets_by_parent", async (context) => {
     const queryParams = context.request.url.searchParams;
-    const spaceId = queryParams.get("space_id");
+    // const spaceId = queryParams.get("space_id");
     const parentId = queryParams.get("parent_id");
 
-    if (!spaceId || !parentId) {
+    if (!parentId) {
       context.response.status = 400;
       context.response.body = {
         error: "space_id and parent_id parameters are required",
@@ -1231,8 +1273,8 @@ router
     }
 
     const query = gql`
-    query GetSpacePostsBySpaceIdAndParentId {
-        spacePosts(where: { spaceId: "5", parentId: "15353" }) {
+    query GetSpacePostsBySpaceIdAndParentId($parentId: String!) {
+        spacePosts(where: { parentId: $parentId }) {
           id
           assetId
           creator {
@@ -1256,7 +1298,6 @@ router
     // console.log(queryString);
 
     const variables = {
-      spaceId,
       parentId,
     };
 
