@@ -6,6 +6,10 @@
 
 🧪 Bodhi AI Explorer 是一个基于向量化数据和智能合约的 Bodhi 内容搜索和去中心化内容标注 App。
 
+&
+
+It's a spec version of NonceGeek for `scaffold-eth`.
+
 
 ## Quickstart
 
