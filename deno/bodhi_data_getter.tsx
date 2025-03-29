@@ -357,6 +357,45 @@ router
         context.response.body = { error: "Failed to fetch data" };
       }
   })
+  // curl -X GET "http://localhost:8000/text_search_v2?keyword=%E5%AE%9A&table_name=cantonese_corpus_all&column=data&limit=10"
+  .get("/text_search_v2", async (context) => { 
+    const queryParams = context.request.url.searchParams;
+    const key = queryParams.get("keyword");
+    const tableName = queryParams.get("table_name");
+    const column = queryParams.get("column");
+    const limit = parseInt(queryParams.get("limit"), 10); // Get limit from query and convert to integer
+    const supabase_url = queryParams.get("supabase_url") || Deno.env.get("SUPABASE_URL");
+    // TODO: make SUPABASE_SERVICE_ROLE_KEY for a spec table as a param.
+    const supabase = createClient(
+      supabase_url,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+    console.log("supabase_url", supabase_url);
+    try {
+      let query = supabase
+        .from(tableName)
+        .select("*") // Select all columns initially
+        .textSearch(column, key)
+        .order("id", { ascending: false }); // Order results by id_on_chain in descending order
+
+      if (!isNaN(limit) && limit > 0) {
+        query = query.limit(limit); // Apply limit to the query if valid
+      }
+
+      const { data, error } = await query;
+
+      console.log("data", data);
+      context.response.status = 200;
+      context.response.body = data;
+      if (error) {
+        throw error;
+      }
+    } catch (error) { 
+      console.error("Error fetching data:", error);
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch data" };
+    }
+  })
   .get("/text_search", async (context) => {
     const queryParams = context.request.url.searchParams;
     const key = queryParams.get("keyword");
