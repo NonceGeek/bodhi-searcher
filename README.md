@@ -1,7 +1,7 @@
 # 🏗 Bodhi AI Explorer
 
 <h4 align="center">
-  <a href="https://smart-contract-explorer.movespace.xyz/"> -[ Lanuch App ]- </a>
+  <a href="https://bodhi.movespace.xyz/"> -[ Lanuch App ]- </a>
 </h4>
 
 🧪 Bodhi AI Explorer 是一个基于向量化数据和智能合约的 Bodhi 内容搜索和去中心化内容标注 App。
