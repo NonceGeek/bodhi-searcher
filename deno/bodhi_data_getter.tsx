@@ -195,6 +195,93 @@ async function getAssetsBySpace(
 }
 
 router
+  .get("/", async (context) => {
+    context.response.body = { result: "Hello World!" };
+  })
+// APIs for corpus things.
+  .get("/corpus_apps", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const { data, error } = await supabase
+      .from("cantonese_corpus_apps")
+      .select("*")
+
+    if (error) {
+      throw error;
+    }
+
+    context.response.body = data;
+  })
+  .get("/corpus_categories", async (context) => {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const { data, error } = await supabase
+      .from("cantonese_categories")
+      .select("*")
+
+    if (error) {
+      throw error;
+    }
+
+    context.response.body = data;
+  })
+  .get("/corpus_category", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const name = queryParams.get("name");
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const { data, error } = await supabase
+      .from("cantonese_categories")
+      .select("*")
+      .eq("name", name);
+
+    if (error) {
+      throw error;
+    }
+
+    context.response.body = data;
+  })
+  .get("/corpus_item", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const unique_id = queryParams.get("unique_id");
+    const data = queryParams.get("data");
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    let query = supabase
+      .from("cantonese_corpus_all")
+      .select("*");
+
+    if (unique_id) {
+      query = query.eq("unique_id", unique_id);
+    } else if (data) {
+      query = query.eq("data", data);
+    } else {
+      context.response.status = 400;
+      context.response.body = { error: "Either unique_id or data parameter is required" };
+      return;
+    }
+
+    const { data: resp, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    context.response.body = resp;
+  })
+  // upper: corpus things.
   .get("/embedding_search", async (context) => {
     // HINT: DO NOT DELETE: By default, the length of the embedding vector will be 1536 for text-embedding-3-small or 3072 for text-embedding-3-large .
     // & the embedding size of llama3.2 is 3072.
@@ -294,9 +381,6 @@ router
 
     context.response.body = { message: "Category updated successfully", data };
   })
-  .get("/", async (context) => {
-    context.response.body = { result: "Hello World!" };
-  })
   .get("/imgs_latest_id", async (context) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -372,12 +456,26 @@ router
     );
     console.log("supabase_url", supabase_url);
     try {
-      let query = supabase
-        .from(tableName)
-        .select("*") // Select all columns initially
-        .textSearch(column, key)
-        .order("id", { ascending: false }); // Order results by id_on_chain in descending order
+      // TODO: make searchableTables dynamic.
+      const searchableTables = ["cantonese_corpus_all", "bodhi_text_assets", "bodhi_text_assets_k_v", "bodhi_text_assets_k_v_space_145"];
 
+      // Check if the table is allowed to be searched
+      if (!searchableTables.includes(tableName)) {
+        context.response.status = 403; // Forbidden status code
+        context.response.body = {
+          error: "The specified table is not searchable.",
+        };
+        return;
+      }
+      // let query = supabase
+      //   .from(tableName)
+      //   .select("*") // Select all columns initially
+      //   .textSearch(column, key)
+      //   .order("id", { ascending: false }); // Order results by id_on_chain in descending order
+      let query = supabase
+      .rpc('search_cantonese_corpus', { search_term: key })
+      .order("id", { ascending: false });
+      
       if (!isNaN(limit) && limit > 0) {
         query = query.limit(limit); // Apply limit to the query if valid
       }

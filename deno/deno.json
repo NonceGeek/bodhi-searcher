@@ -11,6 +11,8 @@
     "@deno/gfm": "jsr:@deno/gfm@^0.9.0"
   },
   "tasks": {
-    "start": "deno run --allow-net --allow-env sdk.tsx"
+    "start": "deno run --allow-net --allow-env bodhi_data_getter.tsx",
+    "dev": "deno run --allow-net --allow-env --watch bodhi_data_getter.tsx",
+    "check": "deno check bodhi_data_getter.tsx"
   }
 }

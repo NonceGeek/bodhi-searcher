@@ -35,6 +35,7 @@ const GET_SPACE_POST_CREATE_EVENTS = gql`
   }
 `;
 
+// Though it is use the subgraph with arbitrum domain, it is still working on optimism...
 async function getSpacePostCreateEvent(assetId: number) {
   const response = await fetch(
     `https://gateway-arbitrum.network.thegraph.com/api/${Deno.env.get(
@@ -60,8 +61,6 @@ async function getSpacePostCreateEvent(assetId: number) {
   console.log(data);
   return data.data.spacePostCreateEvents;
 }
-
-
 
 // Configuration for your smart contract
 const contractABI = [
@@ -94,12 +93,11 @@ const contractABI = [
 ];
 const contractAddress = "0x2ad82a4e39bac43a54ddfe6f94980aaf0d1409ef";
 
-
 const contractABIFac = [
   "function spaceIndex() view returns (uint256)",
   "function spaces(uint256) view returns (address)",
   "function create(uint256 assetId, string spaceName)",
-  "event Create(uint256 spaceId, address indexed spaceAddress, uint256 indexed assetId, address creator, string spaceName)"
+  "event Create(uint256 spaceId, address indexed spaceAddress, uint256 indexed assetId, address creator, string spaceName)",
 ];
 
 const contractAddressFactory = "0xa14d19387c83b56343fc2e7a8707986af6a74d08";
@@ -111,7 +109,11 @@ const provider = new ethers.providers.JsonRpcProvider(
 
 const contract = new ethers.Contract(contractAddress, contractABI, provider);
 
-const contractFactory = new ethers.Contract(contractAddressFactory, contractABIFac, provider);
+const contractFactory = new ethers.Contract(
+  contractAddressFactory,
+  contractABIFac,
+  provider
+);
 
 // <!-- factory contract interactors
 async function getSpaceIndexFromContractFactory() {
@@ -158,6 +160,28 @@ async function fetchArweaveContent(arweaveId: string) {
 const router = new Router();
 
 router
+  .get("/", async (context) => {
+    context.response.body = { result: "Hello World!" };
+  })
+  .get("/fetch_arweave_content", async (context) => {
+    const queryParams = context.request.url.searchParams;
+    const arweaveId = queryParams.get("arweave_id");
+
+    if (!arweaveId) {
+      context.response.status = 400;
+      context.response.body = { error: "Missing arweave_id parameter" };
+      return;
+    }
+
+    try {
+      const { contentType, body } = await fetchArweaveContent(arweaveId);
+      context.response.body = { contentType, body };
+    } catch (error) {
+      context.response.status = 500;
+      context.response.body = { error: "Failed to fetch Arweave content" };
+    }
+  })
+  // curl http://localhost:8000/get_post_create_event/?asset_id=15507
   .get("/get_post_create_event", async (context) => {
     const queryParams = context.request.url.searchParams;
     const assetId = parseInt(queryParams.get("asset_id") || "0");
@@ -181,7 +205,7 @@ router
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
-    
+
     const { data, _error } = await supabase
       .from("bodhi_indexer")
       .select("index")
@@ -191,11 +215,9 @@ router
 
     const index_on_chain = await getSpaceIndexFromContractFactory();
     console.log("index_on_chain", index_on_chain);
-    const { _data, error_insert } = await supabase
-    .from("bodhi_spaces")
-    .insert({
+    const { _data, error_insert } = await supabase.from("bodhi_spaces").insert({
       contract_addr: "abcd",
-      id_on_chain: 3
+      id_on_chain: 3,
     });
 
     if (index_on_chain > index_now) {
@@ -203,16 +225,16 @@ router
       for (i = index_now + 1; i <= index_on_chain - 1; i++) {
         const space = await getSpaceFromContractFactory(i);
         console.log("space", space);
-        
+
         const { _data, error_insert } = await supabase
           .from("bodhi_spaces")
           .insert({
             contract_addr: space.toLowerCase(),
-            id_on_chain: i
+            id_on_chain: i,
           });
 
         console.log("error_insert", error_insert);
-        
+
         const { error } = await supabase
           .from("bodhi_indexer")
           .update({ index: i })
@@ -220,7 +242,7 @@ router
         console.log("error", error);
       }
     }
-    
+
     context.response.body = { index: index_on_chain };
   })
   .get("/embedding", async (context) => {
@@ -245,9 +267,9 @@ router
       console.log("handling 50 items...");
       if (error) {
         console.error("Error fetching data:", error);
-        context.response.body = { 
+        context.response.body = {
           error: "Failed to fetch data",
-          processedCount 
+          processedCount,
         };
         return;
       }
@@ -269,13 +291,13 @@ router
             },
             body: JSON.stringify({
               model: modelName,
-              input: item.data
-            })
+              input: item.data,
+            }),
           });
 
           const embedResult = await response.json();
-          const vectorString = `[${embedResult.embeddings.join(',')}]`;
-          
+          const vectorString = `[${embedResult.embeddings.join(",")}]`;
+
           const { error: updateError } = await supabase
             // .from("bodhi_text_assets_k_v_space_145")
             .from("bodhi_text_assets_k_v")
@@ -283,25 +305,30 @@ router
             .eq("id", item.id);
 
           if (updateError) {
-            console.error("Error updating embedding for id", item.id, ":", updateError);
+            console.error(
+              "Error updating embedding for id",
+              item.id,
+              ":",
+              updateError
+            );
           } else {
             processedCount++;
           }
-
         } catch (err) {
           console.error("Error processing item", item.id, ":", err);
         }
       }
 
       // Optional: Add a small delay to prevent overwhelming the system
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    context.response.body = { 
-      message: "All embeddings completed", 
-      processedCount 
+    context.response.body = {
+      message: "All embeddings completed",
+      processedCount,
     };
   })
+  // used in cron-sync-bodhi supabase function.
   .get("/sync_latest_index", async (context) => {
     const supabase = createClient(
       // Supabase API URL - env var exported by default.
@@ -353,6 +380,86 @@ router
     let arweave_id = queryParams.get("arweave_id");
     const { contentType } = await fetchArweaveContent(arweave_id);
     context.response.body = { contentType };
+  })
+  // tips: see all triggers: SELECT * FROM pg_trigger;
+  // used in trigger to_text_database supabase function.
+  .get("/impl_to_text_database", async (context) => {
+    const supabase = createClient(
+      // Supabase API URL - env var exported by default.
+      Deno.env.get("SUPABASE_URL") ?? "",
+      // Supabase API ANON KEY - env var exported by default.
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      // Create client with Auth context of the user that called the function.
+      // This way your row-level-security (RLS) policies are applied.
+      // { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    let id_on_chain = context.request.url.searchParams.get("id_on_chain");
+
+    let data, error;
+
+    if (id_on_chain) {
+      // Handle specific item by id_on_chain
+      const result = await supabase
+        .from("bodhi_raw_assets")
+        .select("*")
+        .eq("id_on_chain", parseInt(id_on_chain));
+      data = result.data;
+      error = result.error;
+    } else {
+      // Handle all unprocessed items
+      const result = await supabase
+        .from("bodhi_raw_assets")
+        .select("*")
+        .eq("if_handled_to_bodhi_text_assets", false);
+      data = result.data;
+    }
+
+    console.log("data", data);
+    console.log("error", error);
+
+    for (const item of data) {
+      try {
+          const { contentType, body } = await fetchArweaveContent(item.ar_tx_id);
+          
+          console.log("item.id_on_chain", item.id_on_chain);
+          console.log("contentType", contentType);
+
+          // Skip if body is "not found"
+          if (body === "Not Found") {
+            console.log("Skipping item - body is 'not found'");
+            continue;
+          }
+
+        if (
+          contentType?.includes("text/markdown") ||
+          contentType?.includes("text/plain")
+        ) {
+          console.log("markdown or undefined.");
+
+          // insert to next dataset
+          const resp = await supabase.from("bodhi_text_assets").insert({
+            id_on_chain: item.id_on_chain,
+            content: body,
+            creator: item.creator,
+          });
+
+          console.log("insert resp", resp);
+
+          // change the status of the original dataset
+          await supabase
+            .from("bodhi_raw_assets")
+            .update({
+              if_handled_to_bodhi_text_assets: true,
+            })
+            .eq("id_on_chain", item.id_on_chain);
+        } else {
+          console.log("other stuff.");
+        }
+      } catch (error) {
+        console.error("Error fetching or processing Arweave content:", error);
+      }
+    }
   })
   .post("/to_text_database", async (context) => {
     let content = await context.request.body.text();
@@ -433,7 +540,6 @@ router
     console.log("datadata", data);
     let item;
     for (item in data) {
-
       console.log(data[item].creator);
       const { data: spacesData, error: spacesError } = await supabase
         .from("bodhi_spaces")
@@ -497,6 +603,7 @@ router
   //       });
   //     }
   // })
+  // used in trigger to_bodhi_text_assets_k_v supabase function.
   .post("/to_bodhi_text_assets_k_v", async (context) => {
     const supabase = createClient(
       // Supabase API URL - env var exported by default.
@@ -540,8 +647,9 @@ router
       (paragraph) => paragraph.trim() !== ""
     );
     for (const paragraph of filteredParagraphs) {
-
-      if (creator.toLowerCase() === "0xca9252a60403199c092cbb4bd99b8fc7626dee3a") {
+      if (
+        creator.toLowerCase() === "0xca9252a60403199c092cbb4bd99b8fc7626dee3a"
+      ) {
         // it's a article in xiaolai space, to handle it spec.
         await supabase.from("bodhi_text_assets_k_v_space_145").insert({
           data: paragraph,
